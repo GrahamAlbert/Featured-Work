@@ -1,0 +1,261 @@
+---
+title: "Intrasexually Competitie Attitude Scale EFA"
+author: "Graham Albert"
+date: "January 8, 2019"
+output: html_document
+---
+
+####First I will load the necessary packages in the work space.
+####To load cvs files
+```{r}
+require(curl) 
+```
+######lto replace missing data
+```{r}
+require(mice)
+```
+######for advanced rotation methods
+```{r}
+require(GPArotation)
+```
+#####for data manipulation
+```{r}
+require(dplyr)
+```
+####for graphical depiction
+```{r}
+require(gplots)
+require(gridExtra)
+require(moments)
+require(psych)##for EFA, and descriiptivves
+require(BaylorEdPsych)####for missing value analysis
+require(lavaan)####for latent variable analysis CFA and SEM.
+require(semPlot)####for graphical depiction
+require(BDgraph)##### for graphical depiction
+require(yaml)
+require(stringi)
+```
+
+
+####To load data set one for the CMVS.
+```{r}
+f <- curl("https://raw.githubusercontent.com/GrahamAlbert/Mate-Value/master/Intrasexually_comeptitive_attitude_EFA_20190108.csv")
+ICSEFA<- read.csv(f, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+View(ICSEFA)
+head(ICSEFA)
+names(ICSEFA)
+```
+
+####To determine variable names of the data set.
+```{r}
+names(ICSEFA)[1]<-"SEX"
+names(ICSEFA)
+```
+####To obtain summary statistics for the data set.
+```{r}
+summary(ICSEFA)
+```
+####To remove categorical variables.
+```{r}
+require(dplyr)
+ICSEFA2 = ICSEFA[-c(3:13)]
+View(ICSEFA2)
+```
+####To obtain the descriptive statistics includinag the skewness and kurtosis values of the the ICS
+```{r}
+require(psych)
+normalityassessment = describe(ICSEFA2[-c(1,2)])
+View(normalityassessment)
+```
+####All items are normally distributed.
+####We will proceed to analyze patterns of missingness.
+
+
+
+
+
+
+
+####To screening for missing values.
+####To write a funtion to check for missng data.
+```{r}
+percentmiss=function(x){sum(is.na(x)/length(x))*100}
+```
+
+
+####To check for missing data by columns
+```{r}
+apply(ICSEFA2,2,percentmiss)
+```
+####It is less than 2% missing for all variables.
+
+####To check for missing data by row
+```{r}
+missing=apply(ICSEFA2, 1,percentmiss)
+table(missing)
+```
+
+
+####To exclude participants who are missing greater than 5% of their data.
+```{r}
+replacepeople=subset(ICSEFA2,missing<=5)
+```
+####I will be elimating three cases.
+
+
+
+
+####Make sure that the columns are not missing too much data.
+```{r}
+apply(replacepeople, 2, percentmiss)
+```
+
+###After inspecting the skewness and kurtosis statistics for the cmvs it appears that all questions are relatively normally distributed therefore I will proceed with analyzing the data for missing values.
+####To analysis the data set for missing value patters
+```{r}
+require(BaylorEdPsych)
+require(mvnmle)
+LittleMCAR(replacepeople[-c(1,2)])
+```
+#####After excluding the cases with too much missing data we will replace the remaining missing data with a stocastic imputation method.
+```{r}
+require(mice)
+tempnomiss = mice(replacepeople)
+nomiss=complete (tempnomiss, 1)
+summary(nomiss)
+```
+###To lookk at data within missing replaced.
+```{r}
+View(nomiss)
+```
+####To screen for multivariate outliers.
+####To screen for multivariate outliers in the data set nomiss we will use mahalanobis distance statistic.
+```{r}
+mahal = mahalanobis(nomiss,
+                    colMeans(nomiss),
+                    cov(nomiss))
+cutoff = qchisq(0.999, ncol(nomiss)) #####generates cutoff score
+ncol(nomiss) #####determines df
+table(mahal<cutoff)
+```
+####To exelucde the 18  outliers from the analysis.
+```{r}
+noout = subset(nomiss, mahal<cutoff)
+View(noout)
+```
+####Therefore for this analysis we will have a total of 263 cases.
+
+
+###Assumptions.
+####To screen for multcorinately
+####Althoughy the items are correlated (as they should) we do not have multi-colinearity so we proceed with EFA assumptionn set.
+####I will be excluding the single report items from rows 1 and 2(sex and age) from analysis, so that I can look at the correlations amongst the items.
+```{r}
+correl=cor(noout[-c(1,2)], use ="pairwise.complete.obs")
+View(correl)
+```
+###EFA assumption set up.
+```{r}
+random = rchisq(nrow(noout[-c(1,2)]),7)
+fake = lm(random ~.,data=noout[-c(1,2)])
+standardized = rstudent(fake)
+fitted = scale(fake$fitted.values)
+```
+####To test for normality.
+```{r}
+hist(standardized)
+```
+####The data is normal but slightly skewed to the right
+
+####It appears as though we have multi-variate normality so we proceed to test linearity.
+####To test for linearity.
+```{r}
+qqnorm(standardized)
+abline(0,1)
+```
+####Our variables are linear so we procede to test homogenity of vairance.
+
+
+####Homogenity of Variance.
+```{r}
+plot(fitted, standardized)
+abline(0,0)
+abline(v=0)
+```
+
+
+####To conduct a cfa on the 12 item ICS (Fisher et al 2008)
+###First we will create a data set with only the ICS items
+```{r}
+detach("package:BDgraph", unload=TRUE)
+ICSDATA=select(noout, ICS1:ICS12)
+head(ICSDATA)
+```
+
+
+###Assumptions.
+####To screen for addivity for the ICS
+```{r}
+correl4=cor(ICSDATA, use ="pairwise.complete.obs")
+symnum(correl4)
+```
+###To run bartletts test of sphericty
+```{r}
+require(psych)
+cortest.bartlett(correl4, n = nrow(ICSDATA))
+```
+####sampling adequacy KMO test.
+```{r}
+KMO(correl4)
+```
+####detereminig number of factors for extraction.
+```{r}
+nofactors <- fa.parallel(ICSDATA,fm="ml",fa="fa")
+sum(nofactors$fa.values > 1.0)#####old kaiser criterion
+sum(nofactors$fa.values > 0.7)#####new kaiser criterion
+```
+####Kaisers old criterion and the screen plot recommends 1 factor for the ICS,whereas Kaisers new criterion and the parrallel analysis recommends 2 factors.
+####We will start with a 1 factor solution.
+
+```{r}
+require(GPArotation)
+ICSefa1 = fa(ICSDATA,nfactors=1,rotate="oblimin", fm="ml")
+ICSefa1
+```
+
+####To compute the CFI of the ICS.
+```{r}
+CFI<-1-((ICSefa1$STATISTIC-ICSefa1$dof)/(ICSefa1$null.chisq-ICSefa1$null.dof))
+CFI
+```
+
+####The two factor solution for the ICS
+```{r}
+require(GPArotation)
+ICSefafinal = fa(ICSDATA,nfactors=2,rotate="oblimin", fm="ml")
+ICSefafinal
+```
+
+
+
+####To compute the CFI of the SDQ.
+```{r}
+CFI<-1-((ICSefafinal$STATISTIC-ICSefafinal$dof)/(ICSefafinal$null.chisq-ICSefafinal$null.dof))
+CFI
+```
+####To create a factor plot.
+```{r}
+factor.plot(ICSefafinal, labels=rownames(ICSefafinal)) 
+```   
+
+
+#To create a diagram of the analysis.
+```{r}
+fa.diagram(ICSefafinal, simple=FALSE)
+```
+
+
+
+####Now that we have explored the factor structure we will load the second round of data and conduct a CFA and an MGFA testing measurement invariance and population heterogenity.
+
+

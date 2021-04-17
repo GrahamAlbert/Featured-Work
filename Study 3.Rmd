@@ -1,0 +1,228 @@
+---
+title: "CMVS Outcome Variables"
+author: "Graham Albert"
+date: "April 7 2020"
+output: html_document
+---
+
+####First I will load the necessary packages in the work space.
+####To load cvs files
+```{r}
+require(curl) 
+```
+######lto replace missing data
+```{r}
+require(mice)
+```
+######for advanced rotation methods
+```{r}
+require(GPArotation)
+```
+#####for data manipulation
+```{r}
+require(dplyr)
+```
+####for graphical depiction
+```{r}
+require(gplots)
+require(gridExtra)
+require(moments)
+require(psych)##for EFA, and descriiptivves
+require(BaylorEdPsych)####for missing value analysis
+require(lavaan)####for latent variable analysis CFA and SEM.
+require(semPlot)####for graphical depiction
+require(BDgraph)##### for graphical depiction
+require(yaml)
+require(stringi)
+```
+
+
+####To load data set one for the CMVS.
+```{r}
+f <- curl("https://raw.githubusercontent.com/GrahamAlbert/Mate-Value/master/IC_PSAP_Graham_HETERO_reduced.csv")
+ICSBEHAV<- read.csv(f, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+View(ICSBEHAV)
+head(ICSBEHAV)
+names(ICSBEHAV)
+```
+
+####To determine variable names of the data set.
+```{r}
+names(ICSBEHAV)[1]<-"ID"
+names(ICSBEHAV)
+```
+####To obtain summary statistics for the data set.
+```{r}
+summary(ICSBEHAV)
+```
+
+####To obtain the descriptive statistics includinag the skewness and kurtosis values of the the ICS
+```{r}
+require(psych)
+normalityassessment = describe(ICSBEHAV[-c(1,2)])
+View(normalityassessment)
+```
+####To generate histograms for the variables that are not normality distributed.
+```{r}
+hist(ICSBEHAV$PSAPNPnts)
+hist(ICSBEHAV$ PSAPNProv)
+hist(ICSBEHAV$PSAPOpt1)
+hist(ICSBEHAV$PSAPOpt2)
+hist(ICSBEHAV$PSAPOpt3)
+```
+
+####To screening for missing values.
+####To write a funtion to check for missng data.
+```{r}
+percentmiss=function(x){sum(is.na(x)/length(x))*100}
+```
+
+
+####To check for missing data by columns
+```{r}
+apply(ICSBEHAV,2,percentmiss)
+```
+####It is less than 2% missing for all variables.
+
+####To check for missing data by row
+```{r}
+missing=apply(ICSBEHAV, 1,percentmiss)
+table(missing)
+```
+
+
+####To exclude participants who are missing greater than 5% of their data.
+```{r}
+replacepeople=subset(ICSBEHAV,missing<=5)
+```
+####I will be elimating three cases.
+
+####Make sure that the columns are not missing too much data.
+```{r}
+apply(replacepeople, 2, percentmiss)
+```
+
+#####After excluding the cases with too much missing data we will replace the remaining missing data with a stocastic imputation method.
+```{r}
+require(mice)
+tempnomiss = mice(replacepeople)
+nomiss = complete(tempnomiss, 1)
+summary(nomiss)
+```
+###To lookk at data within missing replaced.
+```{r}
+View(nomiss)
+```
+####To screen for multivariate outliers.
+####To screen for multivariate outliers in the data set nomiss we will use mahalanobis distance statistic.
+```{r}
+mahal = mahalanobis(nomiss[-c(1,2)],
+                    colMeans(nomiss[-c(1,2)]),
+                    cov(nomiss[-c(1,2)]))
+cutoff = qchisq(0.999, ncol(nomiss[-c(1,2)])) #####generates cutoff score
+ncol(nomiss[-c(1,2)]) #####determines df
+table(mahal<cutoff)
+```
+####To exelucde the 3 outliers from the analysis.
+```{r}
+noout = subset(nomiss, mahal<cutoff)
+View(noout)
+```
+
+###Assumptions.
+####To screen for multcorinately
+####Althoughy the items are correlated (as they should) we do not have multi-colinearity so we proceed with SEM assumptionn set.
+####I will be excluding the single report items from rows 1 to 4 from ID to whether participants are in a long term relationship from analysis.
+```{r}
+correl=cor(noout[-c(1)], use ="pairwise.complete.obs")
+View(correl)
+```
+###EFA assumption set up.
+```{r}
+random = rchisq(nrow(noout[-c(1)]),7)
+fake = lm(random ~.,data=noout[-c(1)])
+standardized = rstudent(fake)
+fitted = scale(fake$fitted.values)
+```
+####To test for normality.
+```{r}
+hist(standardized)
+```
+####The data is normal but slightly skewed to the right
+
+####It appears as though we have multi-variate normality so we proceed to test linearity.
+####To test for linearity.
+```{r}
+qqnorm(standardized)
+abline(0,1)
+```
+####Our variables are linear so we procede to test homogenity of vairance.
+
+
+####Homogenity of Variance.
+```{r}
+plot(fitted, standardized)
+abline(0,0)
+abline(v=0)
+```
+###To load in the necessary packages for multiple regression.
+```{r}
+require(MASS)
+require(arm)
+```
+####To create a new variable.
+```{r}
+require(dplyr)
+noout2 = mutate(noout,FW=(ICS1+ICS2+ICS3+ICS5+ICS6+ICS7+ICS8+ICS12+ICS11)/9,BB=(ICS10+ICS4+ICS9+ICS11)/4)
+```
+###Lets compute means for women
+```{r}
+mean(noout2$FW)
+sd(noout2$FW)
+mean(noout2$BB)
+sd(noout2$BB)
+```
+
+
+#####To level relationship status.
+```{r}
+noout2$Rel= factor(noout2$Rel, labels=c("Single", "Dating"))
+```
+
+####Let's conduct a multiple regression.
+```{r}
+options(scipen = 9999)
+M1 = lm(PSAPOpt2~FW+BB+Rel+PSAPNProv, data = noout2)
+summary(M1)
+plot(M1)
+```
+
+####Lets generate confidence intervals for the dependent variables.
+```{r}
+confint(M1)
+```
+
+####Lets compute the standardized coefficient FW.
+```{r}
+pooledSDFW = sd(noout2$FW)/sd(noout2$PSAPOpt2)
+-1.848*pooledSDFW
+```
+
+####Lets compute the standardized coefficient BB
+```{r}
+pooledSDBB = sd(noout2$BB)/sd(noout2$PSAPOpt2)
+-8.635 *pooledSDBB
+```
+
+####Lets compute the standardized coefficient relationship status.
+```{r}
+pooledSDRelDating = sd(noout2$RelDating)/sd(noout2$PSAPOpt2)
+-16.729 *pooledSDRelDating
+```
+
+
+####Lets compute the standardized coefficient relationship status.
+```{r}
+pooledSDPSAPNProv= sd(noout2$PSAPNProv)/sd(noout2$PSAPOpt2)
+-17.484 *pooledSDPSAPNProv
+```

@@ -1,0 +1,346 @@
+---
+title: "CMVS Outcome Variables"
+author: "Graham Albert"
+date: "April 7 2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+####First I will load the necessary packages in the work space.
+####To load cvs files
+```{r}
+require(curl) 
+```
+######lto replace missing data
+```{r}
+require(mice)
+```
+######for advanced rotation methods
+```{r}
+require(GPArotation)
+```
+#####for data manipulation
+```{r}
+require(dplyr)
+```
+####for graphical depiction
+```{r}
+require(gplots)
+require(gridExtra)
+require(moments)
+require(psych)##for EFA, and descriiptivves
+require(BaylorEdPsych)####for missing value analysis
+require(lavaan)####for latent variable analysis CFA and SEM.
+require(semPlot)####for graphical depiction
+require(BDgraph)##### for graphical depiction
+require(yaml)
+require(stringi)
+```
+
+
+####To load data set one for the CMVS.
+```{r}
+f <- curl("https://raw.githubusercontent.com/GrahamAlbert/Mate-Value/master/ICS_SEM_Variables.csv")
+ICSSEM<- read.csv(f, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+View(ICSSEM)
+head(ICSSEM)
+names(ICSSEM)
+```
+
+####To determine variable names of the data set.
+```{r}
+names(ICSSEM)[1]<-"ID"
+names(ICSSEM)
+```
+####To obtain summary statistics for the data set.
+```{r}
+summary(ICSSEM)
+```
+
+####To obtain the descriptive statistics includinag the skewness and kurtosis values of the the cmvs
+```{r}
+require(psych)
+normalityassessment = describe(ICSSEM[-c(1:5)])
+View(normalityassessment)
+```
+####To generate histograms for the variables that are not normality distributed.
+```{r}
+hist(ICSSEM$Partner_Number)
+hist(ICSSEM$Participant_Lifetime_Sex_Partners)
+hist(ICSSEM$Past_Year_Sex_Partners)
+hist(ICSSEM$Past_Month_Sex)
+```
+####To mutate the data set to conduct a log 10 transformations for the skewed outcome variables
+```{r}
+ICSSEM2= mutate(ICSSEM, LGPartnerNumber=log10(Partner_Number+1), LGParticipantLifetimeSexPartners = log10(Participant_Lifetime_Sex_Partners+1),LGPastYearSexPartners=log10(Past_Year_Sex_Partners+1),LGPastMonthSex = log10(Past_Month_Sex+1))
+View(ICSSEM2)
+```
+####To generate histograms for the variables that are not normality distributed.
+```{r}
+hist(ICSSEM2$LGPartnerNumber)
+hist(ICSSEM2$LGParticipantLifetimeSexPartners)
+hist(ICSSEM2$LGPastYearSexPartners)
+hist(ICSSEM2$LGPastMonthSex)
+```
+
+###To evaluate the skew of the transformed variables.
+```{r}
+require(psych)
+describe(ICSSEM2$LGPartnerNumber)
+describe(ICSSEM2$LGParticipantLifetimeSexPartners)
+describe(ICSSEM2$LGPastYearSexPartners)
+describe(ICSSEM2$LGPastMonthSex)
+```
+
+
+
+####To remove redundant variables
+```{r}
+ICSSEM3 = ICSSEM2[-c(5:7,9,12,13,14,15)]
+View(ICSSEM3)
+```
+
+####To screening for missing values.
+####To write a funtion to check for missng data.
+```{r}
+percentmiss=function(x){sum(is.na(x)/length(x))*100}
+```
+
+
+####To check for missing data by columns
+```{r}
+apply(ICSSEM3,2,percentmiss)
+```
+####It is less than 2% missing for all variables.
+
+####To check for missing data by row
+```{r}
+missing=apply(ICSSEM3, 1,percentmiss)
+table(missing)
+```
+
+
+####To exclude participants who are missing greater than 5% of their data.
+```{r}
+replacepeople=subset(ICSSEM3,missing<=5)
+```
+####I will be elimating three cases.
+
+####Make sure that the columns are not missing too much data.
+```{r}
+apply(replacepeople, 2, percentmiss)
+```
+
+#####After excluding the cases with too much missing data we will replace the remaining missing data with a stocastic imputation method.
+```{r}
+require(mice)
+tempnomiss = mice(replacepeople)
+nomiss = complete(tempnomiss, 1)
+summary(nomiss)
+```
+###To lookk at data within missing replaced.
+```{r}
+View(nomiss)
+```
+####To screen for multivariate outliers.
+####To screen for multivariate outliers in the data set nomiss we will use mahalanobis distance statistic.
+```{r}
+mahal = mahalanobis(nomiss,
+                    colMeans(nomiss),
+                    cov(nomiss))
+cutoff = qchisq(0.999, ncol(nomiss)) #####generates cutoff score
+ncol(nomiss) #####determines df
+table(mahal<cutoff)
+```
+####To exelucde the 17  outliers from the analysis.
+```{r}
+noout = subset(nomiss, mahal<cutoff)
+View(noout)
+```
+####Therefore for this analysis we will have a total of 351 cases.
+####T subset noout according to participants reported ethnicity.
+```{r}
+
+reduced_noout = subset(noout, Participant_Ethnicity_1 == 1 | Participant_Ethnicity_1 == 3)
+View(reduced_noout)
+
+```
+
+####To remove the PNA from relationship status
+```{r}
+noout  = subset(noout, Participant_LTR !=3)
+View(noout)
+```
+
+
+####To label the factors.
+```{r}
+noout$Face_Set_Code = factor(noout$Participant_Sex,
+                             levels = c(1,2),
+                             labels = c("Male", "Female"))
+table(noout$Participant_Sex)
+noout$Participant_Ethnicity_1 = factor(noout$Participant_Ethnicity_1,
+                             levels = c(1,2,3,4,5,6,7,8),
+                             labels = c("White", "Asian", "South Asian", "South East Asian", "West Asian", "Black African", "Native Aborginal", "Latino"))
+table(noout$Participant_Ethnicity_1)
+noout$Participant_LTR = factor(noout$Participant_LTR,
+                             levels = c(1,2),
+                             labels = c("Yes", "No"))
+table(noout$Participant_LTR)
+noout$Had_Sex = factor(noout$Had_Sex,
+                             levels = c(1,2),
+                             labels = c("Yes", "No"))
+table(noout$Had_Sex)
+```
+
+
+###Assumptions.
+####To screen for multcorinately
+####Althoughy the items are correlated (as they should) we do not have multi-colinearity so we proceed with SEM assumptionn set.
+####I will be excluding the single report items from rows 1 to 4 from ID to whether participants are in a long term relationship from analysis.
+```{r}
+correl=cor(noout[c(8:79)], use ="pairwise.complete.obs")
+View(correl)
+```
+###EFA assumption set up.
+```{r}
+random = rchisq(nrow(noout[c(8:79)]),7)
+fake = lm(random ~.,data=noout[c(8:79)])
+standardized = rstudent(fake)
+fitted = scale(fake$fitted.values)
+```
+####To test for normality.
+```{r}
+hist(standardized)
+```
+####The data is normal but slightly skewed to the right
+
+####It appears as though we have multi-variate normality so we proceed to test linearity.
+####To test for linearity.
+```{r}
+qqnorm(standardized)
+abline(0,1)
+```
+####Our variables are linear so we procede to test homogenity of vairance.
+
+
+####Homogenity of Variance.
+```{r}
+plot(fitted, standardized)
+abline(0,0)
+abline(v=0)
+```
+
+
+
+
+
+#To conduct an SEM.
+```{r}
+SEMMODEL='
+COSTINFLICT=~MRSF38+MRSF36+MRSF2+MRSF4+MRSF8+MRSF17+MRSF19+MRSF21+MRSF23+MRSF27+MRSF33
+BENEFITPROV=~MRSF30+MRSF9+MRSF11+MRSF12+MRSF14+MRSF15+MRSF28+MRSF29+MRSF31+MRSF33
+COSTINFLICT~~BENEFITPROV
+PARTUP=~MEQ1+MEQ3+MEQ5+MEQ6+MEQ7+MEQ10
+SINGLE=~MEQ8+MEQ6+MEQ2+MEQ12
+PARTUP~~SINGLE
+COSTINFLICT~~PARTUP
+COSTINFLICT~~SINGLE
+BENEFITPROV~~SINGLE
+BENEFITPROV~~PARTUP
+Generalfator=~ICS1+ICS2+ICS3+ICS5+ICS6+ICS7+ICS8+ICS12+ICS11+ICS10+ICS4+ICS9
+factor2=~ICS10+ICS4+ICS9+ICS11
+Generalfator~~0*factor2
+attitude=~SOIR4+SOIR5+SOIR6
+desire=~SOIR8+SOIR9+SOIR7
+attitude~~desire
+Generalfator~attitude+desire
+COSTINFLICT~Generalfator+factor2+attitude+desire
+BENEFITPROV~Generalfator+factor2+attitude+desire
+PARTUP~Generalfator+factor2+attitude+desire
+SINGLE~Generalfator+factor2+attitude+desire
+factor2~attitude+desire'
+```
+
+
+####To run the cfa for the ICS
+```{r}
+require(lavaan)
+SEM.FIT=sem(SEMMODEL, data=noout,std.lv = TRUE, information="observed",orthogonal=TRUE)
+```
+
+
+####To summarize model fit
+```{r}
+summary(SEM.FIT, standardized=TRUE, rsquare=TRUE, fit.measure=TRUE)
+```
+
+
+###To produce standardized residuals for the
+```{r}
+zcorrel=residuals(SEM.FIT,type='standardized')
+View(zcorrel$cov)
+```
+####To obtain model indices of the ICS
+```{r}
+modindices(SEM.FIT, sort. =TRUE, minimum.value=3.84)
+```
+
+####To obtian standarized and unstandardized factor laodings
+```{r}
+parameterEstimates(SEM.FIT)
+standardizedsolution(SEM.FIT)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,264 @@
+---
+title: "ICS CFA MGCFA"
+author: "Graham Albert"
+date: "September 10 2020"
+output:pdf_document: default
+---
+
+
+####First I will load the necessary packages in the work space.
+####To load cvs files
+```{r}
+require(curl) 
+```
+######lto replace missing data
+```{r}
+require(mice)
+```
+######for advanced rotation methods
+```{r}
+require(GPArotation)
+```
+#####for data manipulation
+```{r}
+require(dplyr)
+```
+####for graphical depiction
+```{r}
+require(gplots)
+require(gridExtra)
+require(moments)
+require(psych)##for EFA, and descriiptivves
+require(BaylorEdPsych)####for missing value analysis
+require(lavaan)####for latent variable analysis CFA and SEM.
+require(semPlot)####for graphical depiction
+require(yaml)
+require(stringi)
+```
+
+
+####To load data set one for the CMVS.
+```{r}
+f <- curl("https://raw.githubusercontent.com/GrahamAlbert/Mate-Value/master/Intrasexually_comeptitive_attitude_CFA_MGCFA_20190108_reduced.csv")
+ICSCFA<- read.csv(f, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+View(ICSCFA)
+head(ICSCFA)
+names(ICSCFA)
+```
+
+####To determine variable names of the data set.
+```{r}
+names(ICSCFA)[1]<-"ID"
+names(ICSCFA)
+```
+####To obtain summary statistics for the data set.
+```{r}
+summary(ICSCFA)
+```
+
+####To obtain the descriptive statistics includinag the skewness and kurtosis values of the the ICS
+```{r}
+require(psych)
+normalityassessment = describe(ICSCFA[-c(1:3)])
+View(normalityassessment)
+```
+####All items are normally distributed.
+####We will proceed to analyze patterns of missingness.
+
+###After inspecting the skewness and kurtosis statistics for the cmvs it appears that all questions are relatively normally distributed therefore I will proceed with analyzing the data for missing values.
+####To analysis the data set for missing value patters
+```{r}
+require(BaylorEdPsych)
+require(mvnmle)
+LittleMCAR(ICSCFA)
+```
+
+
+
+
+
+####To screening for missing values.
+####To write a funtion to check for missng data.
+```{r}
+percentmiss=function(x){sum(is.na(x)/length(x))*100}
+```
+
+
+####To check for missing data by columns
+```{r}
+apply(ICSCFA,2,percentmiss)
+```
+####It is less than 2% missing for all variables.
+
+####To check for missing data by row
+```{r}
+missing=apply(ICSCFA, 1,percentmiss)
+table(missing)
+```
+
+
+####To exclude participants who are missing greater than 5% of their data.
+```{r}
+replacepeople=subset(ICSCFA,missing<=5)
+```
+####I will be elimating three cases.
+
+####Make sure that the columns are not missing too much data.
+```{r}
+apply(replacepeople, 2, percentmiss)
+```
+
+#####After excluding the cases with too much missing data we will replace the remaining missing data with a stocastic imputation method.
+```{r}
+require(mice)
+require(jomo)
+set.seed(20)
+tempnomiss = mice(replacepeople)
+nomiss=complete(tempnomiss, 1)
+summary(nomiss)
+```
+###To lookk at data within missing replaced.
+```{r}
+View(nomiss)
+```
+####To screen for multivariate outliers.
+####To screen for multivariate outliers in the data set nomiss we will use mahalanobis distance statistic.
+```{r}
+mahal = mahalanobis(nomiss,
+                    colMeans(nomiss),
+                    cov(nomiss))
+cutoff = qchisq(0.999, ncol(nomiss)) #####generates cutoff score
+ncol(nomiss) #####determines df
+table(mahal<cutoff)
+```
+####To exelucde the 14  outliers from the analysis.
+```{r}
+noout = subset(nomiss, mahal<cutoff)
+View(noout)
+```
+####Therefore for this analysis we will have a total of 263 cases.
+
+
+###Assumptions.
+####To screen for multcorinately
+####Althoughy the items are correlated (as they should) we do not have multi-colinearity so we proceed with CFA assumptionn set.
+####I will be excluding the single report items from rows 1 and 2(sex and age) from analysis, so that I can look at the correlations amongst the items.
+```{r}
+correl=cor(noout[-c(1:3)], use ="pairwise.complete.obs")
+View(correl)
+```
+###EFA assumption set up.
+```{r}
+random = rchisq(nrow(noout[-c(1:3)]),7)
+fake = lm(random ~.,data=noout[-c(1:3)])
+standardized = rstudent(fake)
+fitted = scale(fake$fitted.values)
+```
+####To test for normality.
+```{r}
+hist(standardized)
+```
+####The data is normal but slightly skewed to the right
+
+####It appears as though we have multi-variate normality so we proceed to test linearity.
+####To test for linearity.
+```{r}
+qqnorm(standardized)
+abline(0,1)
+```
+####Our variables are linear so we procede to test homogenity of vairance.
+
+
+####Homogenity of Variance.
+```{r}
+plot(fitted, standardized)
+abline(0,0)
+abline(v=0)
+```
+
+####To conduct a cfa on the 12 item ICS (Fisher et al 2008)
+###First we will create a data set with only the ICS items
+```{r}
+require(dplyr)
+ICSDATA=select(noout, ICS1:ICS12)
+head(ICSDATA)
+```
+
+
+###Assumptions.
+####To screen for addivity. 
+```{r}
+correl4=cor(ICSDATA, use ="pairwise.complete.obs")
+symnum(correl4)
+```
+
+
+
+
+####Here we will test a bi-factor model.
+```{r}
+ICS.CFA='
+factor1=~ICS1+ICS2+ICS3+ICS5+ICS6+ICS7+ICS8+ICS12+ICS11
+factor2=~ICS10+ICS4+ICS9+ICS11
+Generalfactor=~1*factor1 + 1*factor2
+Generalfactor~~0*factor1
+Generalfactor~~0*factor2'
+```
+
+####To run the cfa for the ICS
+```{r}
+ICS.bifactor.fit=cfa(ICS.bifactor, data=noout,std.lv = TRUE)
+lavInspect(ICS.bifactor.fit, "cov.lv")
+```
+
+
+####To summarize model fit
+```{r}
+summary(ICS.bifactor.fit, standardized=TRUE, rsquare=TRUE, fit.measure=TRUE)
+```
+
+###To produce standardized residuals for the
+```{r}
+zcorrel=residuals(ICS.bifactor.fit,type='standardized')
+View(zcorrel$cov)
+```
+####To obtain model indices of the SDQ.
+```{r}
+modindices(ICS.bifactor.fit, sort. =TRUE, minimum.value=3.84)
+```
+
+
+
+####To reduce the bi-factor model.
+
+```{r}
+ICS.bifactor.revised='
+Generalfator=~ICS1+ICS2+ICS3+ICS5+ICS6+ICS7+ICS8+ICS12+ICS11+ICS10+ICS4+ICS9
+factor2=~ICS10+ICS4+ICS9+ICS11
+Generalfator~~0*factor2'
+```
+
+####To run the cfa for the ICS
+```{r}
+ICS.bifactor.fit.revised=cfa(ICS.bifactor.revised, data=ICSDATA,std.lv = TRUE, information="observed",orthogonal=TRUE)
+```
+
+
+####To summarize model fit
+```{r}
+summary(ICS.bifactor.fit.revised, standardized=TRUE, rsquare=TRUE, fit.measure=TRUE)
+```
+
+###To produce standardized residuals for the
+```{r}
+zcorrel=residuals(ICS.bifactor.fit.revised,type='standardized')
+View(zcorrel$cov)
+```
+####To obtain model indices of the SDQ.
+```{r}
+modindices(ICS.bifactor.fit.revised, sort. =TRUE, minimum.value=3.84)
+```
+
+
+
+

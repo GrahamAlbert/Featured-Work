@@ -1,0 +1,999 @@
+---
+title: "ICS CFA MGCFA"
+author: "Graham Albert"
+date: "January 8, 2019"
+output: html_document
+---
+
+
+####First I will load the necessary packages in the work space.
+####To load cvs files
+```{r}
+require(curl) 
+```
+######lto replace missing data
+```{r}
+require(mice)
+```
+######for advanced rotation methods
+```{r}
+require(GPArotation)
+```
+#####for data manipulation
+```{r}
+require(dplyr)
+```
+####for graphical depiction
+```{r}
+require(gplots)
+require(gridExtra)
+require(moments)
+require(psych)##for EFA, and descriiptivves
+require(BaylorEdPsych)####for missing value analysis
+require(lavaan)####for latent variable analysis CFA and SEM.
+require(semPlot)####for graphical depiction
+require(BDgraph)##### for graphical depiction
+require(yaml)
+require(stringi)
+```
+
+
+####To load data set one for the CMVS.
+```{r}
+f <- curl("https://raw.githubusercontent.com/GrahamAlbert/Mate-Value/master/Intrasexually_comeptitive_attitude_CFA_MGCFA_20190108_reduced.csv")
+ICSCFA<- read.csv(f, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+View(ICSCFA)
+head(ICSCFA)
+names(ICSCFA)
+```
+
+####To determine variable names of the data set.
+```{r}
+names(ICSCFA)[1]<-"ID"
+names(ICSCFA)
+```
+####To obtain summary statistics for the data set.
+```{r}
+summary(ICSCFA)
+```
+
+####To obtain the descriptive statistics includinag the skewness and kurtosis values of the the ICS
+```{r}
+require(psych)
+normalityassessment = describe(ICSCFA[-c(1:3)])
+View(normalityassessment)
+```
+####All items are normally distributed.
+####We will proceed to analyze patterns of missingness.
+
+###After inspecting the skewness and kurtosis statistics for the cmvs it appears that all questions are relatively normally distributed therefore I will proceed with analyzing the data for missing values.
+####To analysis the data set for missing value patters
+```{r}
+require(BaylorEdPsych)
+require(mvnmle)
+LittleMCAR(ICSCFA)
+```
+
+
+
+
+
+####To screening for missing values.
+####To write a funtion to check for missng data.
+```{r}
+percentmiss=function(x){sum(is.na(x)/length(x))*100}
+```
+
+
+####To check for missing data by columns
+```{r}
+apply(ICSCFA,2,percentmiss)
+```
+####It is less than 2% missing for all variables.
+
+####To check for missing data by row
+```{r}
+missing=apply(ICSCFA, 1,percentmiss)
+table(missing)
+```
+
+
+####To exclude participants who are missing greater than 5% of their data.
+```{r}
+replacepeople=subset(ICSCFA,missing<=5)
+```
+####I will be elimating three cases.
+
+####Make sure that the columns are not missing too much data.
+```{r}
+apply(replacepeople, 2, percentmiss)
+```
+
+#####After excluding the cases with too much missing data we will replace the remaining missing data with a stocastic imputation method.
+```{r}
+require(mice)
+require(jomo)
+set.seed(20)
+tempnomiss = mice(replacepeople)
+nomiss=complete(tempnomiss, 1)
+summary(nomiss)
+```
+###To lookk at data within missing replaced.
+```{r}
+View(nomiss)
+```
+####To screen for multivariate outliers.
+####To screen for multivariate outliers in the data set nomiss we will use mahalanobis distance statistic.
+```{r}
+mahal = mahalanobis(nomiss,
+                    colMeans(nomiss),
+                    cov(nomiss))
+cutoff = qchisq(0.999, ncol(nomiss)) #####generates cutoff score
+ncol(nomiss) #####determines df
+table(mahal<cutoff)
+```
+####To exelucde the 14  outliers from the analysis.
+```{r}
+noout = subset(nomiss, mahal<cutoff)
+View(noout)
+```
+####Therefore for this analysis we will have a total of 263 cases.
+
+
+###Assumptions.
+####To screen for multcorinately
+####Althoughy the items are correlated (as they should) we do not have multi-colinearity so we proceed with CFA assumptionn set.
+####I will be excluding the single report items from rows 1 and 2(sex and age) from analysis, so that I can look at the correlations amongst the items.
+```{r}
+correl=cor(noout[-c(1:3)], use ="pairwise.complete.obs")
+View(correl)
+```
+###EFA assumption set up.
+```{r}
+random = rchisq(nrow(noout[-c(1:3)]),7)
+fake = lm(random ~.,data=noout[-c(1:3)])
+standardized = rstudent(fake)
+fitted = scale(fake$fitted.values)
+```
+####To test for normality.
+```{r}
+hist(standardized)
+```
+####The data is normal but slightly skewed to the right
+
+####It appears as though we have multi-variate normality so we proceed to test linearity.
+####To test for linearity.
+```{r}
+qqnorm(standardized)
+abline(0,1)
+```
+####Our variables are linear so we procede to test homogenity of vairance.
+
+
+####Homogenity of Variance.
+```{r}
+plot(fitted, standardized)
+abline(0,0)
+abline(v=0)
+```
+
+#####Lets compute the mean for the ICS.
+```{r}
+require(dplyr)
+noout = mutate(noout,FW=(ICS1+ICS2+ICS3+ICS5+ICS6+ICS7+ICS8+ICS12+ICS11)/9,BB=(ICS10+ICS4+ICS9+ICS11)/4)
+View(noout)
+```
+
+####To compute means for the two factors.
+
+####I will factor sex  in which 1 will be men and 2 will be wmomen.
+```{r}
+require(dplyr)
+noout$Participant_Sex = factor(noout$Participant_Sex, labels=c("Men", "Women"))
+table(noout$Participant_Sex)
+View(noout)
+```
+
+###Lets compute means
+```{r}
+mean(noout$FW)
+sd(noout$FW)
+mean(noout$BB)
+sd(noout$BB)
+```
+####Measurement invariance and population heterogenity for the two factor solution.
+####Now we will test men amd women separately.
+####Here I am subsetting the data sets by sex to create a male and female data set.
+```{r}
+ICSmen=subset(noout, Participant_Sex=="Men")
+ICSwomen=subset(noout, Participant_Sex=="Women")
+```
+###Lets compute means for men
+```{r}
+mean(ICSmen$FW)
+sd(ICSmen$FW)
+mean(ICSmen$BB)
+sd(ICSmen$BB)
+```
+###Lets compute means for women
+```{r}
+mean(ICSwomen$FW)
+sd(ICSwomen$FW)
+mean(ICSwomen$BB)
+sd(ICSwomen$BB)
+```
+
+
+
+
+
+####To conduct a cfa on the 12 item ICS (Fisher et al 2008)
+###First we will create a data set with only the ICS items
+```{r}
+require(dplyr)
+ICSDATA=select(noout, ICS1:ICS12)
+head(ICSDATA)
+```
+
+
+###Assumptions.
+####To screen for addivity for the ICS
+```{r}
+correl4=cor(ICSDATA, use ="pairwise.complete.obs")
+symnum(correl4)
+```
+###To run bartletts test of sphericty
+```{r}
+require(psych)
+cortest.bartlett(correl4, n = nrow(ICSDATA))
+```
+####sampling adequacy KMO test.
+```{r}
+KMO(correl4)
+```
+####detereminig number of factors for extraction.
+```{r}
+nofactors <- fa.parallel(ICSDATA,fm="ml",fa="fa")
+sum(nofactors$fa.values > 1.0)#####old kaiser criterion
+sum(nofactors$fa.values > 0.7)#####new kaiser criterion
+```
+####Kaisers old criterion and the screen plot recommends 1 factor for the ICS,whereas Kaisers new criterion and the parrallel analysis recommends 2 factors.
+####We will start with a 1 factor solution.
+
+```{r}
+require(GPArotation)
+ICSefa1 = fa(ICSDATA,nfactors=1,rotate="oblimin", fm="ml")
+ICSefa1
+```
+
+####To compute the CFI of the ICS
+```{r}
+CFI<-1-((ICSefa1$STATISTIC-ICSefa1$dof)/(ICSefa1$null.chisq-ICSefa1$null.dof))
+CFI
+```
+
+####The two factor solution for the ICS
+```{r}
+require(GPArotation)
+ICSefafinal = fa(ICSDATA,nfactors=2,rotate="oblimin", fm="ml")
+ICSefafinal
+```
+
+
+
+####To compute the CFI of the ICS
+```{r}
+CFI<-1-((ICSefafinal$STATISTIC-ICSefafinal$dof)/(ICSefafinal$null.chisq-ICSefafinal$null.dof))
+CFI
+```
+
+
+
+
+####To specify the two factor model.
+```{r}
+ICS.two.model='
+FEARWORSE=~ICS1+ICS2+ICS3+ICS5+ICS6+ICS7+ICS8+ICS12
+BEBETTER=~ICS10+ICS4+ICS9+ICS11'
+```
+
+####To specify the one factor model.
+```{r}
+ICS.one.model='
+ICS=~ICS1+ICS2+ICS3+ICS5+ICS6+ICS7+ICS8+ICS12+ICS4+ICS9+ICS10+ICS11'
+```
+####To run the cfa for the ICS
+```{r}
+require(lavaan)
+ICS.two.fit=cfa(ICS.two.model, data=ICSDATA)
+```
+####To run the cfa for the ICS
+```{r}
+ICS.one.fit=cfa(ICS.one.model, data=ICSDATA)
+```
+
+####to depict the  models.
+####Two fit
+```{r}
+require(BGgraphs)
+require(semPlot)
+semPaths(ICS.two.fit, whatLabels="std",layout="tree",edge.label.cex = 0.5,curvePivot = TRUE)
+```
+
+###One fit
+```{r}
+require(BGgraphs)
+require(semPlot)
+semPaths(ICS.one.fit, whatLabels="std",layout="tree",edge.label.cex = 0.5,curvePivot = TRUE)
+```
+
+####To summarize model fit
+```{r}
+summary(ICS.two.fit, standardized=TRUE, rsquare=TRUE, fit.measure=TRUE)
+summary(ICS.one.fit, standardized=TRUE, rsquare=TRUE, fit.measure=TRUE)
+```
+####To conduct a chi-square difference test to determine if the two factor solution is better than the one factor solution.
+```{r}
+anova(ICS.one.fit,ICS.two.fit)
+```
+####The two factor soulution is better than the one factor solution.
+
+
+###To produce standardized residuals for the
+```{r}
+zcorrel=residuals(ICS.two.fit,type='standardized')
+View(zcorrel$cov)
+```
+####To obtain model indices of the SDQ.
+```{r}
+modindices(ICS.two.fit, sort. =TRUE, minimum.value=3.84)
+```
+
+####To obtian standarized and unstandardized factor loadings
+```{r}
+parameterEstimates(ICS.two.fit, standardized =T)
+standardizedsolution(ICS.two.fit)
+```
+
+
+
+
+
+####To obtian standarized and unstandardized factor loadings
+```{r}
+parameterEstimates(ICS.one.fit, standardized =T)
+standardizedsolution(ICS.one.fit)
+```
+
+####To depict the relevant coefficients and se in table.
+```{r}
+require(dplyr) 
+require(tidyr)
+require(knitr)
+require(lavaan)
+parameterEstimates(ICS.two.fit, standardized=TRUE) %>% 
+  filter(op == "=~") %>% 
+  select('Latent Factor'=lhs, Indicator=rhs, B=est, SE=se, Z=z, 'p-value'=pvalue, Beta=std.all) %>% 
+  kable(digits = 3, format="pandoc", caption="Factor Loadings")
+```
+
+
+
+
+
+
+
+
+####To specify the two factor model in which item 11 is crossloaded onto the wanting to be better than others factor.
+```{r}
+ICS.two.model.revised='
+FEARWORSE=~ICS1+ICS2+ICS3+ICS5+ICS6+ICS7+ICS8+ICS12+ICS11
+BEBETTER=~ICS10+ICS4+ICS9+ICS11'
+```
+
+####To run the cfa for the ICS
+```{r}
+require(lavaan)
+ICS.two.fit.revised=cfa(ICS.two.model.revised, data=ICSDATA)
+```
+
+####to depict the  models.
+####Two fit
+```{r}
+require(BGgraphs)
+require(semPlot)
+semPaths(ICS.two.fit.revised, whatLabels="std",layout="tree",edge.label.cex = 0.5,curvePivot = TRUE)
+```
+
+
+####To summarize model fit
+```{r}
+summary(ICS.two.fit.revised, standardized=TRUE, rsquare=TRUE, fit.measure=TRUE)
+```
+####To conduct a chi-square difference test to determine if the two factor solution is better than the one factor solution.
+```{r}
+anova(ICS.two.fit,ICS.two.fit.revised)
+```
+####The two factor soulution in which item 11 is crossloaded onto the be better factor results in a significantly better fit than the 2 facor model without crossloadings.
+
+
+###To produce standardized residuals for the
+```{r}
+zcorrel=residuals(ICS.two.fit.revised,type='standardized')
+View(zcorrel$cov)
+```
+####To obtain model indices of the SDQ.
+```{r}
+modindices(ICS.two.fit.revised, sort. =TRUE, minimum.value=3.84)
+```
+###All remaining modindices are below 20 and therefore we will not modifiy the solution any more.
+####To obtian standarized and unstandardized factor loadings
+```{r}
+parameterEstimates(ICS.two.fit.revised, standardized =T)
+standardizedsolution(ICS.two.fit.revised)
+```
+####To depict the relevant coefficients and se in table.
+```{r}
+require(dplyr) 
+require(tidyr)
+require(knitr)
+require(lavaan)
+parameterEstimates(ICS.two.fit.revised, standardized=TRUE) %>% 
+  filter(op == "=~") %>% 
+  select('Latent Factor'=lhs, Indicator=rhs, B=est, SE=se, Z=z, 'p-value'=pvalue, Beta=std.all) %>% 
+  kable(digits = 3, format="pandoc", caption="Factor Loadings")
+```
+####To test for a method effect.
+####We will test a single factor solution in which all of the negatively worded items residuals and the postitively worded residuals items are correlated with each other.
+```{r}
+ICS.method.effect.model='
+ICS=~ICS1+ICS2+ICS3+ICS5+ICS6+ICS7+ICS8+ICS12+ICS11+ICS10+ICS4+ICS9
+ICS11~~ICS10
+ICS11~~ICS4
+ICS11~~ICS9
+ICS10~~ICS4
+ICS10~~ICS9
+ICS4~~ICS9'
+```
+
+
+####To run the cfa for the ICS
+```{r}
+require(lavaan)
+ICS.method.effect.fit=cfa(ICS.method.effect.model, data=ICSDATA)
+```
+
+####to depict the  models.
+####Two fit
+```{r}
+require(BGgraphs)
+require(semPlot)
+semPaths(ICS.method.effect.fit, whatLabels="std",layout="tree",edge.label.cex = 0.5,curvePivot = TRUE)
+```
+
+
+####To summarize model fit
+```{r}
+summary(ICS.method.effect.fit, standardized=TRUE, rsquare=TRUE, fit.measure=TRUE)
+```
+
+####To obtian standarized and unstandardized factor loadings
+```{r}
+parameterEstimates(ICS.method.effect.fit, standardized =T)
+standardizedsolution(ICS.method.effect.fit)
+```
+####The two factor soulution in which item 11 is crossloaded onto the be better factor results in a significantly better fit than the 2 facor model without crossloadings.
+
+
+
+####One factor againsts one factor with correlated residuals
+```{r}
+anova(ICS.one.fit,ICS.method.effect.fit)
+```
+####To test the method effect model to the two fit model.
+```{r}
+anova(ICS.method.effect.fit,ICS.two.fit)
+```
+
+####To conduct a chi-square difference test to determine if the two factor solution is better than the one factor solution.
+```{r}
+anova(ICS.two.fit.revised,ICS.method.effect.fit)
+```
+
+
+
+####To conduct a chi-square difference test to compare all four models
+```{r}
+anova(ICS.two.fit.revised,ICS.method.effect.fit,ICS.two.fit,ICS.one.fit)
+```
+###To produce standardized residuals for the
+```{r}
+zcorrel=residuals(ICS.method.effect.fit,type='standardized')
+View(zcorrel$cov)
+```
+####To obtain model indices of the SDQ.
+```{r}
+modindices(ICS.method.effect.fit, sort. =TRUE, minimum.value=3.84)
+```
+###All remaining modindices are below 20 and therefore we will not modifiy the solution any more.
+####To obtian standarized and unstandardized factor loadings
+```{r}
+parameterEstimates(ICS.method.effect.fit, standardized =T)
+standardizedsolution(ICS.method.effect.fit)
+```
+####To depict the relevant coefficients and se in table.
+```{r}
+require(dplyr) 
+require(tidyr)
+require(knitr)
+require(lavaan)
+parameterEstimates(ICS.two.fit.revised, standardized=TRUE) %>% 
+  filter(op == "=~") %>% 
+  select('Latent Factor'=lhs, Indicator=rhs, B=est, SE=se, Z=z, 'p-value'=pvalue, Beta=std.all) %>% 
+  kable(digits = 3, format="pandoc", caption="Factor Loadings")
+```
+
+
+
+#####To reduce the data set to only containing sex and the ICS items
+```{r}
+ICS2 = noout[-c(1,3)]
+head(ICS2)
+```
+
+
+
+####I will factor sex  in which 1 will be men and 2 will be wmomen.
+```{r}
+require(dplyr)
+ICS2$Participant_Sex = factor(ICS2$Participant_Sex, labels=c("Men", "Women"))
+table(ICS2$Participant_Sex)
+View(ICS2)
+```
+####Measurement invariance and population heterogenity for the two factor solution.
+####Now we will test men amd women separately.
+####Here I am subsetting the data sets by sex to create a male and female data set.
+```{r}
+ICSmen=subset(ICS2, Participant_Sex=="Men")
+ICSwomen=subset(ICS2, Participant_Sex=="Women")
+```
+###Cfa for both sexes for the two factor solution
+```{r}
+ICS.men.fit.original=cfa(ICS.two.model.revised, data=ICSmen, meanstructure=TRUE)
+ICS.women.fit.original=cfa(ICS.two.model.revised, data=ICSwomen, meanstructure=TRUE)
+```
+####To summarize the seven factor model for men.
+```{r}
+summary(ICS.men.fit.original,
+        standardized = TRUE,
+        rsquare=TRUE,
+        fit.measure=TRUE)
+```
+####To obtian standarized and unstandardized factor loadings for males.
+```{r}
+parameterEstimates(ICS.men.fit.original, standardized =T)
+standardizedsolution(ICS.men.fit.original)
+```
+
+####To summarize the seven facotr model for women.
+```{r}
+summary(ICS.women.fit.original,
+        standardized = TRUE,
+        rsquare=TRUE,
+        fit.measure=TRUE)
+```
+####To obtian standarized and unstandardized factor loadings for females.
+```{r}
+parameterEstimates(ICS.women.fit.original, standardized =T)
+standardizedsolution(ICS.women.fit.original)
+```
+###To test measuarement invaraince.
+####Now we wil test measusrement invariance. We willv see if the  models have equal form that is configural invariance. Then we will proceed to test for equal factor loadings across the sexes (metric invariannce), by contraining factor loadings to.
+####We conntrain item intercepts to equality to test for equal indicator intercepts (i.e., scalar invariance)
+####Then we will constrain item residuals to test for equal item residuals (i.e., strict invariance)
+####To test men and women together to test for configural invariance.
+```{r}
+configural.fit.original=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex")
+summary(configural.fit.original,standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+###To conduct the test of metric invariance. Here we are testing for equal items loadings between the sexes.
+```{r}
+metric.fit.original=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings"))
+summary(metric.fit.original, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.,
+```{r}
+anova(configural.fit.original,metric.fit.original)
+```
+####Imposing equality constraints on factor loadings between the sexes does not result in signficant degradation in model fit Xdiff(11)=18.265, p=0.07562.
+
+
+
+
+###To conduct the test of scalara invariance. Here we are testing for equal item intercepts between the sexes.
+```{r}
+scalar.fit.original=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts"))
+summary(scalar.fit.original, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.,
+```{r}
+anova(metric.fit.original,scalar.fit.original)
+```
+####Based on the chi square difference test the item intercepts are not equal better the sexes, Xdiff(10)=39.11, p <0.001
+
+####First we will generate a parameter table for the scalar invariance model.
+```{r}
+PT<-parTable(scalar.fit.original)
+View(PT)
+```
+
+## Now we willprint the part with loadings (to see labels) and constraints (to test)
+```{r}
+intercepts<-PT[PT$op %in% c("~1","=="), ]
+View(intercepts)
+```
+## Pass the numbers (in the order they appear in the full PT) of the
+## 21 constraints you want to test  one at a time to lavTestScore()
+```{r}
+intercepts.1<-lavTestScore(scalar.fit.original, epc = TRUE)
+intercepts.1
+```
+#####We will test for partial scalar invaraince by freeing the parameter constraints on item 6.
+
+
+###To conduct the test of partial scalar invariance. We have freed the parameter constraints on itrem 6.
+```{r}
+partial.scalar.fit.1=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts"), group.partial=c("ICS6~1"))
+summary(partial.scalar.fit.1, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.,
+```{r}
+anova(metric.fit.original,partial.scalar.fit.1)
+```
+
+
+
+
+
+
+####Based on the chi square difference test the item intercepts are not equal better the sexes, Xdiff(9)= 29.985, p =0.0004413
+
+####First we will generate a parameter table for the scalar invariance model.
+```{r}
+PT<-parTable(partial.scalar.fit.1)
+View(PT)
+```
+
+## Now we willprint the part with loadings (to see labels) and constraints (to test)
+```{r}
+intercepts.2<-PT[PT$op %in% c("~1","=="), ]
+View(intercepts.2)
+```
+## Pass the numbers (in the order they appear in the full PT) of the
+## 21 constraints you want to test  one at a time to lavTestScore()
+```{r}
+intercepts.2<-lavTestScore(partial.scalar.fit.1, epc = TRUE)
+intercepts.2
+```
+#####We will test for partial scalar invaraince by freeing the parameter constraints on item 6.
+
+
+
+
+
+
+###To conduct the test of partial scalar invariance. We have freed the parameter constraints on itrem 6 and item 11.
+```{r}
+partial.scalar.fit.2=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts"), group.partial=c("ICS6~1","ICS11~1"))
+summary(partial.scalar.fit.2, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.,
+```{r}
+anova(metric.fit.original,partial.scalar.fit.2)
+```
+
+
+
+
+
+####First we will generate a parameter table for the scalar invariance model.
+```{r}
+PT<-parTable(partial.scalar.fit.2)
+View(PT)
+```
+
+## Now we willprint the part with loadings (to see labels) and constraints (to test)
+```{r}
+intercepts.3<-PT[PT$op %in% c("~1","=="), ]
+View(intercepts.3)
+```
+## Pass the numbers (in the order they appear in the full PT) of the
+## 21 constraints you want to test  one at a time to lavTestScore()
+```{r}
+intercepts.3<-lavTestScore(partial.scalar.fit.2, epc = TRUE)
+intercepts.3
+```
+#####We will test for partial scalar invaraince by freeing the parameter constraints on item 6.
+
+
+
+###To conduct the test of partial scalar invariance. We have freed the parameter constraints on items 6  11 and 8.
+```{r}
+partial.scalar.fit.3=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts"), group.partial=c("ICS6~1","ICS11~1","ICS8~1"))
+summary(partial.scalar.fit.3, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.,
+```{r}
+anova(metric.fit.original,partial.scalar.fit.3)
+```
+
+
+
+
+
+####First we will generate a parameter table for the scalar invariance model.
+```{r}
+PT<-parTable(partial.scalar.fit.3)
+View(PT)
+```
+
+## Now we willprint the part with loadings (to see labels) and constraints (to test)
+```{r}
+intercepts.4<-PT[PT$op %in% c("~1","=="), ]
+View(intercepts.4)
+```
+## Pass the numbers (in the order they appear in the full PT) of the
+## 21 constraints you want to test  one at a time to lavTestScore()
+```{r}
+intercepts.4<-lavTestScore(partial.scalar.fit.3, epc = TRUE)
+intercepts.4
+```
+
+###To conduct the test of partial scalar invariance. We have freed the parameter constraints on items 6  11  8 and 7.
+```{r}
+partial.scalar.fit.4=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts"), group.partial=c("ICS6~1","ICS11~1","ICS8~1","ICS7~1"))
+summary(partial.scalar.fit.4, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.,
+```{r}
+anova(metric.fit.original,partial.scalar.fit.4)
+```
+
+####After freeing the parameter constraints for items 6,11,8 and 7 we have acheived partial scalar invariance, Xdiff(6)=9.8277, p=0.1321.
+
+
+###To conduct the test of partial strict invariance
+```{r}
+partial.strict.fit.1=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts", "residuals"), group.partial=c("ICS6~1","ICS11~1","ICS8~1","ICS7~1"))
+summary(partial.strict.fit.1, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.
+```{r}
+anova(partial.scalar.fit.4,partial.strict.fit.1)
+```
+#### Constraining the residuals to equality between the sexes this results in significant degradation in model fit between the sexes
+####Xdiff(12)=38.822, p=0.0001126.
+
+
+####To figure out the issues that is preventing obtaining equal item residuals.
+####First we will generate a parameter table for the partial strict invariance model.
+```{r}
+PT<-parTable(partial.strict.fit.1)
+View(PT)
+```
+
+## Now we willprint the part with loadings (to see labels) and constraints (to test)
+```{r}
+residuals.1<-PT[PT$op %in% c("~~","=="), ]
+View(residuals.1)
+```
+## Pass the numbers (in the order they appear in the full PT) of the
+## 23 one at a time to lavTestScore()
+```{r}
+residuals.1<-lavTestScore(partial.strict.fit.1, epc = TRUE)
+residuals.1
+```
+
+
+
+
+###To conduct the test of partial strict invariance we will free the residuals of item 6 between the sexes while constrain the item residuals between the sexes to equality.
+```{r}
+partial.strict.fit.2=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts", "residuals"), group.partial=c("ICS6~1","ICS11~1","ICS8~1","ICS7~1","ICS6~~ICS6"))
+summary(partial.strict.fit.2, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.
+```{r}
+anova(partial.scalar.fit.4,partial.strict.fit.2)
+```
+#### Freeing the residuals for item 6 improves model fit but still results in significant degrdation in model fit from the previous partial scalar invairnace model Xdiff(11)=27.726, p=0.003566.
+
+
+
+####To figure out the issues that is preventing obtaining equal item residuals.
+####First we will generate a parameter table for the partial strict invariance model.
+```{r}
+PT<-parTable(partial.strict.fit.2)
+View(PT)
+```
+
+## Now we willprint the part with loadings (to see labels) and constraints (to test)
+```{r}
+residuals.2<-PT[PT$op %in% c("~~","=="), ]
+View(residuals.2)
+```
+## Pass the numbers (in the order they appear in the full PT) of the
+## 23 one at a time to lavTestScore()
+```{r}
+residuals.2<-lavTestScore(partial.strict.fit.2, epc = TRUE)
+residuals.2
+```
+
+
+
+###To conduct the test of partial strict invariance we will free the residuals of item 6 and 4 between the sexes while constrain the item residuals between the sexes to equality.
+```{r}
+partial.strict.fit.3=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts", "residuals"), group.partial=c("ICS6~1","ICS11~1","ICS8~1","ICS7~1","ICS6~~ICS6","ICS4~~ICS4"))
+summary(partial.strict.fit.3, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.
+```{r}
+anova(partial.scalar.fit.4,partial.strict.fit.3)
+```
+
+
+#### Freeing the residuals for items 6 and 4 improves model fit but still results in significant degrdation in model fit from the previous partial scalar invairnace model Xdiff(10)=19.334, p=0.03622
+
+
+
+####To figure out the issues that is preventing obtaining equal item residuals.
+####First we will generate a parameter table for the partial strict invariance model.
+```{r}
+PT<-parTable(partial.strict.fit.3)
+View(PT)
+```
+
+## Now we willprint the part with loadings (to see labels) and constraints (to test)
+```{r}
+residuals.3<-PT[PT$op %in% c("~~","=="), ]
+View(residuals.3)
+```
+## Pass the numbers (in the order they appear in the full PT) of the
+## 23 one at a time to lavTestScore()
+```{r}
+residuals.3<-lavTestScore(partial.strict.fit.3, epc = TRUE)
+residuals.3
+```
+
+
+###To conduct the test of partial strict invariance we will free the residuals of item 6,  4 and 11 between the sexes while constrain the item residuals between the sexes to equality.
+```{r}
+partial.strict.fit.4=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts", "residuals"), group.partial=c("ICS6~1","ICS11~1","ICS8~1","ICS7~1","ICS6~~ICS6","ICS4~~ICS4","ICS11~~ICS11"))
+summary(partial.strict.fit.4, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+
+####To conduct a chi square difference tests to determine if constraining the factor loadings between the sexes results in significant degradation in model fit.
+```{r}
+anova(partial.scalar.fit.4,partial.strict.fit.4)
+```
+
+####After freeing the residuals of items 6,4, and 11 between the sexes we have acheived partial strict invariance between the sexes, Xdiff(9)=9.9333, p=0.3559.
+
+
+####Now we will proceed to test population heterogenity in which we will test for equality between factor variances, factor covarainces and factor means.
+
+
+
+
+
+
+
+##To conduct the test of partial equal factor variances we will constrain the factor variances to equality between the sexes and determine if this significanlty degrades model fit.
+```{r}
+partial.lvvaraince.1=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts", "residuals", "lv.variances"), group.partial=c("ICS6~1","ICS11~1","ICS8~1","ICS7~1","ICS6~~ICS6","ICS4~~ICS4","ICS11~~ICS11"))
+summary(partial.lvvaraince.1, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+
+####To conduct a chi square difference tests to determine if constraining factor variances between the sexes results in significant degradation in model fit.
+```{r}
+anova(partial.strict.fit.4,partial.lvvaraince.1)
+```
+####Constraining the factor variances does not result in singificant degradation in model fit from the partial equal item residuals models Xdiff(2)=.4787 ,p=0.7871. Therefore we will proceed to constrain the factor covariances.
+
+
+
+
+
+
+##To conduct the test of partial equal factor covariances we will constrain the factor variances to equality between the sexes and determine if this significanlty degrades model fit.
+```{r}
+partial.lvcovaraince.1=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts", "residuals", "lv.variances","lv.covariances"), group.partial=c("ICS6~1","ICS11~1","ICS8~1","ICS7~1","ICS6~~ICS6","ICS4~~ICS4","ICS11~~ICS11"))
+summary(partial.lvcovaraince.1, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+
+####To conduct a chi square difference tests to determine if constraining factor covariances between the sexes results in significant degradation in model fit.
+```{r}
+anova(partial.lvvaraince.1,partial.lvcovaraince.1)
+```
+
+
+
+
+
+####To figure out the issues that is preventing obtaining equal factor covariances.
+####First we will generate a parameter table for the partial strict invariance model.
+```{r}
+PT<-parTable(partial.lvcovaraince.1)
+View(PT)
+```
+
+## Now we willprint the part with loadings (to see labels) and constraints (to test)
+```{r}
+residuals.5<-PT[PT$op %in% c("~~","=="), ]
+View(residuals.5)
+```
+## Pass the numbers (in the order they appear in the full PT) of the
+## 23 one at a time to lavTestScore()
+```{r}
+residuals.5<-lavTestScore(partial.lvcovaraince.1, epc = TRUE)
+residuals.5
+```
+
+
+
+
+
+##To conduct free the factor covariances between fear of being less desirable and wanting to be more desirable between the sexes to see if this improved model fit.
+```{r}
+partial.lvcovaraince.2=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts", "residuals", "lv.variances","lv.covariances"), group.partial=c("ICS6~1","ICS11~1","ICS8~1","ICS7~1","ICS6~~ICS6","ICS4~~ICS4","ICS11~~ICS11","BEBETTER~~FEARWORSE"))
+summary(partial.lvcovaraince.2, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+
+####To conduct a chi square difference tests to determine if constraining factor covariances between the sexes results in significant degradation in model fit.
+```{r}
+anova(partial.lvvaraince.1,partial.lvcovaraince.2)
+```
+
+##To constrain the factor means between the sexes and test the extent to which this degrades model fit..
+```{r}
+partial.lvmeans.1=cfa(ICS.two.model.revised,data=ICS2, meanstructure=TRUE, group="Participant_Sex",group.equal=c("loadings","intercepts", "residuals", "lv.variances", "means"), group.partial=c("ICS6~1","ICS11~1","ICS8~1","ICS7~1","ICS6~~ICS6","ICS4~~ICS4","ICS11~~ICS11"))
+summary(partial.lvmeans.1, standardized = TRUE,rsquare=TRUE,fit.measure=TRUE)
+```
+
+
+####The factor means for the two factors fear of being worse than competitors and desire to be better than competitors are different between the sexes.
+###In particular
+```{r}
+anova(partial.lvcovaraince.2,partial.lvmeans.1)
+```
+###Specificaly women score significiantly lower on fear of being worse than do men.
+
+
+
+#####Now let's conduct a reliabilty analysis to compute cronbach's
+```{r}
+require(psych)
+FEARWOR=c(2,3,4,6,7,8,9,12,13)
+BEBETTE=c(5,10,11,12)
+```
+#####Alpla reliability full sample,
+```{r}
+alpha(ICS2[,BEBETTE])
+alpha(ICS2[,FEARWOR])
+```
+
+
+#####Alpla reliability men.
+```{r}
+alpha(ICSmen[,BEBETTE])
+alpha(ICSmen[,FEARWOR])
+```
+#####Alpla reliability women.
+```{r}
+alpha(ICSwomen[,BEBETTE])
+alpha(ICSwomen[,FEARWOR])
+```
+
